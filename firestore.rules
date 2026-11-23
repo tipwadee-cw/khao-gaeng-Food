@@ -1,0 +1,92 @@
+rules_version = '2';
+service cloud.firestore {
+ match /databases/{database}/documents {
+  function signed() { return request.auth != null; }
+  function admin() { return signed() && exists(/databases/$(database)/documents/admins/$(request.auth.uid)) && get(/databases/$(database)/documents/admins/$(request.auth.uid)).data.enabled == true; }
+  function owns() { return signed() && resource.data.ownerUid == request.auth.uid; }
+  match /admins/{uid} {
+   allow read: if signed() && (request.auth.uid == uid);
+   allow write: if false;
+  }
+  match /config/shop {
+   allow read: if true;
+   allow write: if admin();
+  }
+  match /menus/{menuId} {
+   allow read: if true;
+   allow write: if admin();
+  }
+  match /dailyMenus/{date} {
+   allow read: if true;
+   allow write: if admin();
+  }
+  match /orders/{orderId} {
+   allow get: if admin() || owns();
+   allow list: if admin();
+   allow create: if signed()
+     && request.resource.data.keys().hasOnly(['ownerUid','name','phone','selected','items','combo','qty','pickup','note','total','date','status','createdAt'])
+     && request.resource.data.ownerUid == request.auth.uid
+     && request.resource.data.status == 'awaiting_slip'
+     && request.resource.data.name is string && request.resource.data.name.size() >= 2 && request.resource.data.name.size() <= 80
+     && request.resource.data.phone is string && request.resource.data.phone.size() <= 15
+     && request.resource.data.note is string && request.resource.data.note.size() <= 300
+     && request.resource.data.combo is int && request.resource.data.combo >= 1 && request.resource.data.combo <= 3
+     && request.resource.data.qty is int && request.resource.data.qty >= 1 && request.resource.data.qty <= 20
+     && request.resource.data.selected is list && request.resource.data.selected.size() == request.resource.data.combo
+     && request.resource.data.items is list && request.resource.data.items.size() == request.resource.data.combo
+     && request.resource.data.total is number && request.resource.data.total >= 0 && request.resource.data.total <= 50000
+     && request.resource.data.pickup is string && request.resource.data.pickup.size() == 5
+     && request.resource.data.date is string && request.resource.data.date.size() == 10
+     && request.resource.data.createdAt is string && request.resource.data.createdAt.size() <= 30;
+   allow update: if admin() ||
+    (owns() && resource.data.status == 'awaiting_slip'
+     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status'])
+     && request.resource.data.status == 'pending_review'
+     && exists(/databases/$(database)/documents/slips/$(orderId)));
+   allow delete: if admin();
+  }
+  match /slips/{orderId} {
+   allow get, list: if admin() || (signed() && resource.data.ownerUid == request.auth.uid);
+   allow create: if signed()
+     && exists(/databases/$(database)/documents/orders/$(orderId))
+     && get(/databases/$(database)/documents/orders/$(orderId)).data.ownerUid == request.auth.uid
+     && get(/databases/$(database)/documents/orders/$(orderId)).data.status == 'awaiting_slip'
+     && request.resource.data.keys().hasOnly(['ownerUid','imageData','createdAt'])
+     && request.resource.data.ownerUid == request.auth.uid
+     && request.resource.data.imageData is string
+     && request.resource.data.imageData.size() < 160001
+     && request.resource.data.imageData.matches('data:image/jpeg;base64,.*')
+     && request.resource.data.createdAt is string;
+   allow update, delete: if admin();
+  }
+  match /votes/{voteId} {
+   allow read: if true;
+   allow create: if signed()
+     && request.resource.data.keys().hasOnly(['date','menuId','ownerUid','createdAt'])
+     && request.resource.data.ownerUid == request.auth.uid
+     && voteId == request.resource.data.date + '_' + request.auth.uid
+     && request.resource.data.date is string && request.resource.data.date.size() == 10
+     && request.resource.data.menuId is string && request.resource.data.menuId.size() <= 80
+     && exists(/databases/$(database)/documents/menus/$(request.resource.data.menuId))
+     && request.resource.data.createdAt is string;
+   allow update: if signed() && resource.data.ownerUid == request.auth.uid
+     && request.resource.data.ownerUid == resource.data.ownerUid
+     && request.resource.data.date == resource.data.date
+     && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['menuId','createdAt'])
+     && exists(/databases/$(database)/documents/menus/$(request.resource.data.menuId));
+   allow delete: if admin();
+  }
+  match /suggestions/{suggestionId} {
+   allow read: if true;
+   allow create: if signed()
+     && request.resource.data.keys().hasOnly(['name','ownerUid','status','createdAt'])
+     && request.resource.data.ownerUid == request.auth.uid
+     && request.resource.data.status == 'pending'
+     && request.resource.data.name is string
+     && request.resource.data.name.size() >= 3 && request.resource.data.name.size() <= 90
+     && request.resource.data.createdAt is string;
+   allow update, delete: if admin();
+  }
+  match /{document=**} { allow read, write: if false; }
+ }
+}
